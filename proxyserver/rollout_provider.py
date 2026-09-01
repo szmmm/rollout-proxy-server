@@ -1048,6 +1048,8 @@ class SlimeRolloutProvider(BaseRolloutProvider):
                 resp = await self._http.get("/get_server_info")
                 resp.raise_for_status()
                 info = resp.json()
+                if _served_context_length(info) is None:
+                    info = await self._worker_server_info() or info
             except Exception as e:
                 if not self._context_length_fetch_warned:
                     self._context_length_fetch_warned = True
@@ -1071,6 +1073,29 @@ class SlimeRolloutProvider(BaseRolloutProvider):
             else:
                 logger.info("%s: engine context window is %d tokens (from /get_server_info)", self.router_url, self._context_length)
             return self._context_length
+
+    async def _worker_server_info(self) -> Any:
+        """One worker's ``GET /get_server_info``, found through the router's
+        ``GET /workers``.
+
+        sgl-router answers ``/get_server_info`` itself — router-manager stats
+        (``router_manager``, ``routers_count``, ``workers_count``) with no
+        ServerArgs in them — instead of forwarding the call to a worker.  Ask
+        a worker directly; every worker serves the same model, so the first
+        one that answers speaks for the pool.  ``None`` when the router lists
+        no worker.
+        """
+        resp = await self._http.get("/workers")
+        resp.raise_for_status()
+        payload = resp.json()
+        workers = payload.get("workers", payload) if isinstance(payload, dict) else payload
+        for worker in workers or []:
+            url = worker.get("url") if isinstance(worker, dict) else worker
+            if url:
+                resp = await self._http.get(f"{url}/get_server_info")
+                resp.raise_for_status()
+                return resp.json()
+        return None
 
     async def _call_engine(
         self,
