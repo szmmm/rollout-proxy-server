@@ -1,4 +1,5 @@
 {
+    "rl-model-szm": "qwen3_5",
     "rl-exp-model": "qwen3_5",
     "Qwen3.5-4B": "qwen3_5",
     "Qwen3.5-9B-Base": "qwen3_5",
