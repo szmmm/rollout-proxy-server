@@ -1,0 +1,9 @@
+fastapi
+httpx
+pydantic
+pyyaml
+ray
+transformers
+openai
+uvicorn
+websockets
