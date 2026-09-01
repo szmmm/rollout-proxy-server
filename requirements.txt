@@ -7,3 +7,4 @@ transformers
 openai
 uvicorn
 websockets
+jinja2
