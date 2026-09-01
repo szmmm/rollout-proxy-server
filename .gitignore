@@ -10,4 +10,5 @@ venv/
 /test/engines.yaml
 /proxyserver/logs/
 /proxyserver/sessions/
-proxyserver.out
+proxyserver.out*
+direct.out*
