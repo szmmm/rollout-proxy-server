@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from proxyserver.tokenization.base import get_profile  # noqa: E402
 from proxyserver.token_stream import (  # noqa: E402
     ASSISTANT_TURN_END,
     GENERATION_PROMPT,
@@ -38,6 +39,7 @@ from proxyserver.token_stream import (  # noqa: E402
 from offline_common import check, load_real_tokenizer  # noqa: E402
 
 BUNDLED_QWEN = str(Path(__file__).resolve().parents[1] / "proxyserver" / "tokenization" / "Qwen3.5")
+BUNDLED_QWEN3 = str(Path(__file__).resolve().parents[1] / "proxyserver" / "tokenization" / "Qwen3")
 MODEL = os.getenv("TOKENIZER_MODEL", BUNDLED_QWEN)
 USER = [{"role": "user", "content": "hi"}]
 TURN2 = USER + [{"role": "assistant", "content": "hello"}, {"role": "user", "content": "more"}]
@@ -506,6 +508,66 @@ def test_stream_matches_the_chat_template() -> None:
                      log_probs=[0.0] * len(completion), finish_reason="stop")
 
 
+def test_qwen3_preserves_sampled_history() -> None:
+    print("\nQwen3 continuations preserve sampled tokens and supply exact EOS gaps")
+    tok = load_real_tokenizer(BUNDLED_QWEN3, required=True)
+    profile = get_profile("qwen3")
+    manager = TokenStreamManager(
+        tok,
+        generation_prompt=profile.generation_prompt,
+        assistant_turn_end=profile.assistant_turn_end,
+    )
+
+    messages1 = [{"role": "user", "content": "inspect the workspace"}]
+    prompt1 = manager.build_prompt("qwen3-history", messages1)
+    terminus_json = (
+        '{"analysis":"inspect","plan":"list files","commands":'
+        '[{"keystrokes":"ls -la\\n","duration":0.1}],"task_complete":false}'
+    )
+    sampled1_text = "<think>choose ls</think>\n" + terminus_json + "<|im_end|>"
+    sampled1 = tok.encode(sampled1_text, add_special_tokens=False)
+    logprobs1 = [-0.001 * (i + 1) for i in range(len(sampled1))]
+    manager.commit(
+        "qwen3-history", messages1, prompt1, sampled1,
+        log_probs=logprobs1, finish_reason="stop",
+    )
+
+    # The HTTP echo contains only agent-visible content; the exact sampled
+    # <think> block and original JSON whitespace remain authoritative tokens.
+    messages2 = messages1 + [
+        {"role": "assistant", "content": terminus_json},
+        {"role": "user", "content": "command output: files listed"},
+    ]
+    prompt2 = manager.build_prompt("qwen3-history", messages2)
+    sampled_stream1 = prompt1 + sampled1
+    check("turn 2 starts with the byte-exact sampled prompt+completion",
+          prompt2[:len(sampled_stream1)] == sampled_stream1)
+    cleaned_echo = tok.encode(terminus_json + "<|im_end|>", add_special_tokens=False)
+    check("cleaned HTTP content was not re-tokenized over sampled reasoning",
+          sampled1 != cleaned_echo)
+    turn2_delta = tok.decode(prompt2[len(sampled_stream1):], skip_special_tokens=False)
+    check("natural EOS receives only its missing newline before the user delta",
+          turn2_delta.startswith("\n<|im_start|>user\ncommand output: files listed"))
+
+    sampled2_text = "partial answer"
+    sampled2 = tok.encode(sampled2_text, add_special_tokens=False)
+    manager.commit(
+        "qwen3-history", messages2, prompt2, sampled2,
+        log_probs=[-0.2] * len(sampled2), finish_reason="length",
+    )
+    messages3 = messages2 + [
+        {"role": "assistant", "content": sampled2_text},
+        {"role": "user", "content": "continue"},
+    ]
+    prompt3 = manager.build_prompt("qwen3-history", messages3)
+    sampled_stream2 = prompt2 + sampled2
+    check("turn 3 again retains the exact prior sampled token prefix",
+          prompt3[:len(sampled_stream2)] == sampled_stream2)
+    turn3_delta = tok.decode(prompt3[len(sampled_stream2):], skip_special_tokens=False)
+    check("a length-truncated turn receives the complete assistant turn ending",
+          turn3_delta.startswith("<|im_end|>\n<|im_start|>user\ncontinue"))
+
+
 def main() -> None:
     test_as_token_ids()
     test_manager_shapes()
@@ -518,6 +580,7 @@ def main() -> None:
     test_real_tokenizer()
     test_bundled_template_tool_delta()
     test_stream_matches_the_chat_template()
+    test_qwen3_preserves_sampled_history()
     print("\n" + "=" * 70)
     print("PASS: TokenStreamManager accepts list[int] and transformers>=5\n"
           "      BatchEncoding alike, builds identical token streams from\n"

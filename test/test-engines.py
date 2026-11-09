@@ -25,6 +25,7 @@ Run:
 
 from __future__ import annotations
 import asyncio
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -514,6 +515,53 @@ async def test_call_free_completion_still_cleans_content() -> None:
     assert tool_calls is None and finish_reason == STOP
     assert content == "visible answer", f"agent-visible content not cleaned: {content!r}"
     print("  ok  call-free completions still get special tokens and reasoning stripped from content")
+
+
+async def test_qwen3_provider_fields() -> None:
+    """The Qwen3 profile cleans agent fields without changing engine data."""
+    raw = (
+        '<think>select weather</think>\n'
+        '<tool_call>\n{"name":"get_weather","arguments":{"city":"SF"}}\n</tool_call>'
+    )
+
+    class Qwen3Tokenizer(FakeTokenizer):
+        def decode(self, token_ids, skip_special_tokens=False):
+            return raw if skip_special_tokens else raw + "<|im_end|>"
+
+    server = FakeServer(TokenOutput(
+        token_ids=[701, 702], log_probs=[-0.11, -0.22], stop_reason="stop",
+    ))
+    provider = RayRolloutProvider(
+        load_balancer=FakeLoadBalancer(server),
+        inference_engine=SGLANG,
+        tokenizer_loader=lambda path: Qwen3Tokenizer(),
+    )
+    prompt_ids, token_ids, log_probs, finish_reason, completion_text, _ = (
+        await provider.generate(
+            messages=[{"role": "user", "content": "weather?"}],
+            session_id="qwen3-fields", model="Qwen3-32B", max_tokens=MAX_TOKENS,
+        )
+    )
+    assert prompt_ids and token_ids == [701, 702] and log_probs == [-0.11, -0.22]
+    assert completion_text == raw + "<|im_end|>"
+    assert server.calls[-1]["temperature"] == 0.6
+    assert server.calls[-1]["top_p"] == 0.95 and server.calls[-1]["top_k"] == 20
+
+    await provider.generate(
+        messages=[{"role": "user", "content": "weather tomorrow?"}],
+        session_id="qwen3-sampling", model="Qwen3-32B", max_tokens=MAX_TOKENS,
+        temperature=0.8, top_p=0.7,
+    )
+    assert server.calls[-1]["temperature"] == 0.8
+    assert server.calls[-1]["top_p"] == 0.7 and server.calls[-1]["top_k"] == 20
+
+    content, calls, finish_reason = await provider.parse_tool_calls(
+        "qwen3-fields", token_ids, completion_text, finish_reason,
+    )
+    assert content == "" and finish_reason == "tool_calls"
+    assert calls and calls[0]["function"]["name"] == "get_weather"
+    assert json.loads(calls[0]["function"]["arguments"]) == {"city": "SF"}
+    print("  ok  Qwen3 provider preserves IDs/logprobs/raw text while Think+Hermes shapes HTTP fields")
 
 
 # ---------------------------------------------------------------------------
@@ -1199,6 +1247,7 @@ def main() -> None:
         asyncio.run(test_bad_completions_rejected())
         asyncio.run(test_tool_calls_survive_finish_reason())
         asyncio.run(test_call_free_completion_still_cleans_content())
+        asyncio.run(test_qwen3_provider_fields())
         asyncio.run(test_tito_still_enforced())
         asyncio.run(test_duplicate_request_reserved())
         asyncio.run(test_rejected_request_failed_fast())

@@ -55,17 +55,28 @@ class ScriptedProvider(BaseRolloutProvider):
         return tokens, [-0.1] * len(tokens), "stop", meta
 
 
-def load_real_tokenizer(model: str) -> Any | None:
+def load_real_tokenizer(model: str, *, required: bool = False) -> Any | None:
     """Load a real ``AutoTokenizer``, or return ``None`` after printing a
     ``skip`` line (transformers not installed, or the tokenizer not
-    loadable — e.g. a hub model while offline)."""
+    loadable — e.g. a hub model while offline).
+
+    ``required=True`` turns either condition into a failing gate.  Bundled
+    tokenizer resources use it so a missing dependency/file cannot be
+    reported as a successful offline adaptation.
+    """
     try:
         from transformers import AutoTokenizer
-    except ImportError:
+    except ImportError as e:
+        if required:
+            raise AssertionError(f"required tokenizer dependency is unavailable: {e}") from e
         print("  skip  transformers not installed")
         return None
     try:
-        return AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+        return AutoTokenizer.from_pretrained(model, trust_remote_code=True, local_files_only=required)
     except Exception as e:
+        if required:
+            raise AssertionError(
+                f"required tokenizer {model!r} cannot be loaded: {type(e).__name__}: {e}"
+            ) from e
         print(f"  skip  cannot load tokenizer ({type(e).__name__})")
         return None

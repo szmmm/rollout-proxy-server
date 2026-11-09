@@ -7,6 +7,8 @@
     "Qwen3.5-27B": "qwen3_5",
     "Qwen3.5-35B-A3B-Base": "qwen3_5",
     "Qwen3.5-35B-A3B": "qwen3_5",
+    "Qwen3-32B": "qwen3",
     "Llama-3.1-8B-Instruct": "llama3_1",
-    "Llama-3.1-70B-Instruct": "llama3_1"
+    "Llama-3.1-70B-Instruct": "llama3_1",
+    "rl-model-szm-h20": "qwen3_5"
 }

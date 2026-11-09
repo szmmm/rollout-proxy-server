@@ -323,6 +323,20 @@ def test_hermes() -> None:
     check("dict arguments JSON-encoded", json.loads(calls[0].arguments) == {"city": "SF"})
     check("content kept", content == "On it.")
 
+    # Terminus-2 consumes a JSON command object from message.content; it does
+    # not use OpenAI native tool_calls.  Qwen3's Hermes parser must remove the
+    # reasoning block but leave that bare JSON object untouched for Harbor.
+    terminus = json.dumps({
+        "analysis": "Inspect the workspace.",
+        "plan": "List the current directory.",
+        "commands": [{"keystrokes": "ls -la\n", "duration": 0.1}],
+        "task_complete": False,
+    })
+    content, calls = extract(HermesToolParser, f"<think>choose ls</think>\n{terminus}")
+    parsed = json.loads(content)
+    check("Terminus JSON stays in content instead of becoming a native tool call",
+          calls == [] and parsed["commands"][0]["keystrokes"] == "ls -la\n")
+
     content, calls = extract(HermesToolParser, "<tool_call>\nnot json at all\n</tool_call>")
     check("malformed JSON yields no call, stays in content",
           calls == [] and "not json at all" in content)
@@ -425,6 +439,10 @@ def test_mapping() -> None:
     check("registry construction validates every mapping entry eagerly", True)
     specs = load_model_mapping()
     check("mapping lists served models", len(specs) > 0)
+    qwen3 = resolve_model_spec("Qwen3-32B")
+    check("Qwen3-32B maps to its bundled tokenizer and existing Hermes parser",
+          Path(qwen3.tokenizer_path).name == "Qwen3"
+          and qwen3.tool_call_parser == "hermes")
     for model in specs:
         spec = resolve_model_spec(model)
         check(f"{model}: resolves (tokenizer={Path(spec.tokenizer_path).name}, "

@@ -5,9 +5,9 @@
 #   2. test-engines.py        (offline: adapters, providers, slime + direct
 #                              transports, lost-response retry re-serve)
 #   3. test-token-stream.py   (offline: strict-TITO manager, every tokenizer
-#                              return shape; bundled Qwen3.5 templates + the
-#                              real $TOKENIZER_MODEL tokenizer, each skipped
-#                              if transformers or the tokenizer is missing)
+#                              return shape; bundled Qwen3.5 and required Qwen3 templates + the
+#                              real $TOKENIZER_MODEL tokenizer; Qwen3 cannot
+#                              skip when dependencies/resources are missing)
 #   4. test-profiles.py       (offline: per-model profiles — stated chat
 #                              markers, tool-call parser, reasoning format;
 #                              built streams match the template's own render)
@@ -40,16 +40,15 @@
 #
 # Usage:
 #   bash test/test_all.sh              # everything (needs live endpoints)
-#   bash test/test_all.sh --offline    # stages 1-8 only, no endpoints needed
+#   bash test/test_all.sh --offline    # stages 1-9 only, no endpoints needed
 #
 # Environment:
 #   PYTHON           interpreter to use (default: ../venv/bin/python next to
 #                    the repo if present, else python3)
 #   PROXY_API_KEY    shared secret for keyed routing (default: test key)
 #   TOKENIZER_MODEL  tokenizer handed to test-token-stream (default:
-#                    Qwen/Qwen3-0.6B).  Set it in the environment and
-#                    test-tool-parser inherits it too; left unset, that test
-#                    uses the bundled proxyserver/tokenization/Qwen3.5.
+#                    bundled proxyserver/tokenization/Qwen3).  Set it
+#                    in the environment and test-tool-parser inherits it too.
 #
 # Logs: one file per test under test/proxy/test_all-{timestamp}/ (gitignored).
 
@@ -62,7 +61,7 @@ if [ -z "${PYTHON:-}" ]; then
     if [ -x "$ROOT/../venv/bin/python" ]; then PYTHON="$ROOT/../venv/bin/python"; else PYTHON=python3; fi
 fi
 export PROXY_API_KEY="${PROXY_API_KEY:-test-proxy-real-key}"
-TOKENIZER_MODEL="${TOKENIZER_MODEL:-Qwen/Qwen3-0.6B}"
+TOKENIZER_MODEL="${TOKENIZER_MODEL:-$ROOT/proxyserver/tokenization/Qwen3}"
 OFFLINE_ONLY=0
 [ "${1:-}" = "--offline" ] && OFFLINE_ONLY=1
 
@@ -126,7 +125,7 @@ EOF
 }
 
 echo "== offline =="
-run "py-compile"         0 "$PYTHON" -m py_compile proxyserver/*.py test/*.py
+run "py-compile"         0 "$PYTHON" -m py_compile proxyserver/*.py proxyserver/tokenization/*.py test/*.py
 run "engines"            0 "$PYTHON" test/test-engines.py
 run "token-stream"       0 env TOKENIZER_MODEL="$TOKENIZER_MODEL" "$PYTHON" test/test-token-stream.py
 run "profiles"           0 "$PYTHON" test/test-profiles.py

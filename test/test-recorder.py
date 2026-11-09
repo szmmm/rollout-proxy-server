@@ -191,7 +191,7 @@ def test_extracted_completion_fields() -> None:
     # content and reasoning_content from completion_text; the recorder
     # stores them verbatim alongside the raw completion_text.
     rec = SessionRecorder()
-    rec.ensure_session("q", model_name="Qwen3.5-9B")
+    rec.ensure_session("q", model_name="Qwen3-32B")
     rec.record_completion("q", [U1], "<think>weighing it</think>hello", C1, [-0.1, -0.2],
                           finish_reason="stop", prompt_token_ids=P1,
                           content="hello", reasoning_content="weighing it")
@@ -204,6 +204,18 @@ def test_extracted_completion_fields() -> None:
           turns[1]["content"] == "t2" and turns[1]["reasoning_content"] is None)
     check("no stored message carries reasoning_content",
           all("reasoning_content" not in m for t in turns for m in t["request_messages"]))
+    check("Qwen3 raw completion IDs and logprobs remain aligned and unchanged",
+          turns[0]["completion_token_ids"] == C1
+          and turns[0]["completion_logprobs"] == [-0.1, -0.2]
+          and len(turns[0]["completion_token_ids"]) == len(turns[0]["completion_logprobs"]))
+    reconstructed = []
+    for turn in turns:
+        if turn["new_conversation"]:
+            reconstructed = []
+        reconstructed.extend(turn["prompt_token_ids"])
+        reconstructed.extend(turn["completion_token_ids"])
+    check("delta-only recorder reconstruction exactly recovers the Qwen3 stream",
+          reconstructed == P2 + C2)
     check("the continuation's assistant echo is not stored",
           [m["role"] for m in turns[1]["request_messages"]] == ["user"])
 
