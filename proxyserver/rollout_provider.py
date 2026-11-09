@@ -62,6 +62,7 @@ Usage::
 from __future__ import annotations
 import asyncio
 import logging
+import httpx
 from typing import Any, Callable
 from uuid import uuid4
 from .engines import ABORT, DEFAULT_MAX_TOKENS, LENGTH, SGLANG, EngineAbort, EngineError, get_adapter
@@ -526,9 +527,21 @@ class BaseRolloutProvider:
             )
 
             try:
-                token_ids, log_probs, stop_reason, engine_meta = await self._call_engine(
-                    prompt_ids, sampling_params, session_id,
-                )
+                for attempt in range(3):
+                    try:
+                        token_ids, log_probs, stop_reason, engine_meta = await self._call_engine(
+                            prompt_ids, sampling_params, session_id,
+                        )
+                        break
+                    except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                        status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                        if attempt == 2 or (status is not None and status != 429 and status < 500):
+                            raise
+                        logger.warning(
+                            "Transient engine failure for stream %s (%s, status=%s); retry %s/2 before commit",
+                            session_id, type(exc).__name__, status, attempt + 1,
+                        )
+                        await asyncio.sleep(2 ** attempt)
             except Exception as e:
                 self._note_engine_rejection(session_id, messages, e)
                 raise

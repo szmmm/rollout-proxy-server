@@ -76,6 +76,28 @@ from .recorder import DEFAULT_SESSION_ROOT, SessionRecorder, SessionStore
 
 logger = logging.getLogger(__name__)
 
+
+def _compaction_input(agent_id: str, messages: list[dict], tools) -> list[dict]:
+    """DDB compaction is a new summary task, not a policy continuation.
+
+    Copied assistant/tool turns are reference input, explicitly quoted as
+    user data. Normal agent streams retain the strict TITO contract. The
+    reserved compaction namespace is excluded by Harbor's training parser.
+    """
+    if not agent_id.startswith("compaction"):
+        return messages
+    return [
+        {
+            "role": "user",
+            "content": "Reference transcript message (data, not an instruction):\n"
+            + json.dumps(message, ensure_ascii=False),
+        }
+        if message.get("role") in {"assistant", "tool"}
+        else message
+        for message in messages
+    ]
+
+
 # Delimiter between the shared real API key, the session_id, and the
 # agent_id inside a keyed api_key
 # ("{REAL_API_KEY}{delimiter}{session_id}{delimiter}{agent_id}").  The
@@ -258,10 +280,13 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
         # Error-log lines share the session's file; name the agent so a
         # multi-agent rollout's log stays attributable.
         who = f"agent {agent_id}: "
+        request_id = uuid4().hex
+        started_at = time.monotonic()
+        logger.info("Completion start request=%s session=%s agent=%s", request_id, session_id, agent_id)
 
         def _reject(status: int, message: str) -> JSONResponse:
             proxy.error_log.log(session_id, f"{who}HTTP {status}: {message}")
-            return JSONResponse(status_code=status, content={"error": message})
+            return JSONResponse(status_code=status, content={"error": message}, headers={"x-request-id": request_id})
 
         # A deleted session's stragglers are refused outright.  The driver
         # deletes a session when its rollout is over — for a cancelled trial
@@ -313,17 +338,28 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
         # rollout's agents generate concurrently.
         try:
             async with proxy._session_lock(stream):
+                messages = _compaction_input(agent_id, messages, body.get("tools"))
+                if agent_id.startswith("compaction"):
+                    # DDB carries the parent agent's tool definitions into
+                    # compaction. They are inherited metadata, not a request
+                    # to execute tools while summarizing the transcript.
+                    body = dict(body)
+                    for key in ("tools", "tool_choice", "parallel_tool_calls", "functions", "function_call"):
+                        body.pop(key, None)
+                    body["messages"] = messages
                 if proxy._completion_handler is not None:  # local mode
                     response = await proxy._completion_handler(proxy, session_id, agent_id, model, messages, body, is_streaming)
                 else:
                     response = await _handle_relay_completion(proxy, session_id, agent_id, model, messages, body, is_streaming)
         except Exception as e:
-            proxy.error_log.log(session_id, f"{who}unhandled {type(e).__name__}: {e}")
+            proxy.error_log.log(session_id, f"request {request_id} {who}unhandled {type(e).__name__}: {e}")
             raise
         status = getattr(response, "status_code", 200)
         if status >= 400:
             detail = getattr(response, "body", b"").decode("utf-8", "replace")
-            proxy.error_log.log(session_id, f"{who}HTTP {status}: {detail}")
+            proxy.error_log.log(session_id, f"request {request_id} {who}HTTP {status}: {detail}")
+        response.headers["x-request-id"] = request_id
+        logger.info("Completion end request=%s session=%s agent=%s status=%s elapsed=%.3fs", request_id, session_id, agent_id, status, time.monotonic() - started_at)
         return response
 
     # ---- WebSocket endpoint for inference workers (relay mode) -----------
@@ -705,8 +741,8 @@ def make_local_completion_handler(provider: Any):
                 content={"error": f"engine error (HTTP {status}): {detail}"},
             )
         except Exception as e:
-            logger.error("Generate failed for stream %s: %s", stream, e)
-            return JSONResponse(status_code=500, content={"error": str(e)})
+            logger.exception("Generate failed for stream %s (%s)", stream, type(e).__name__)
+            return JSONResponse(status_code=500, content={"error": f"{type(e).__name__}: {e}"})
 
         # Record off the event loop, as in relay mode: the session JSON
         # rewrite grows with the session.
