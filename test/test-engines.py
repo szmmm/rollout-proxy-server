@@ -34,7 +34,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from proxyserver.engines import (ABORT, LENGTH, SGLANG, STOP, VLLM,  # noqa: E402
-                                 EngineAbort, EngineError, get_adapter)
+                                 ContextBudgetExhausted, EngineAbort, EngineError, get_adapter)
 from proxyserver.model_registry import UnknownModelError  # noqa: E402
 from proxyserver.rollout_provider import DirectRolloutProvider, RayRolloutProvider,  SlimeRolloutProvider
 from proxyserver.token_stream import GENERATION_PROMPT, TokenStreamError  # noqa: E402
@@ -981,7 +981,7 @@ async def test_direct_provider() -> None:
     provider, _ = make_direct_provider(SGLANG, [_sglang_response([200], "stop")], context_length=len(PROMPT_IDS))
     try:
         await generate(provider)
-    except EngineError as e:
+    except ContextBudgetExhausted as e:
         assert "no room left to generate" in str(e)
     else:
         raise AssertionError("direct/sglang: a prompt filling the context window was accepted")

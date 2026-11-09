@@ -98,6 +98,18 @@ def _compaction_input(agent_id: str, messages: list[dict], tools) -> list[dict]:
     ]
 
 
+def _context_budget_exhausted_response(error: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": {
+                "message": str(error),
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+            }
+        },
+    )
+
 # Delimiter between the shared real API key, the session_id, and the
 # agent_id inside a keyed api_key
 # ("{REAL_API_KEY}{delimiter}{session_id}{delimiter}{agent_id}").  The
@@ -678,6 +690,7 @@ def make_local_completion_handler(provider: Any):
     relay mode's orphan handling, where the worker — in another process —
     keeps generating after the proxy gives up on the request.
     """
+    from .engines import ContextBudgetExhausted
     from .token_stream import TokenStreamError
 
     async def _run_completion(
@@ -704,6 +717,7 @@ def make_local_completion_handler(provider: Any):
                     top_k=_sampling_param(body, "top_k"),
                     min_p=_sampling_param(body, "min_p"),
                     max_tokens=_max_tokens_param(body),
+                    max_total_tokens=body.get("max_total_tokens"),
                     stop=body.get("stop"),
                     tools=body.get("tools"),
                     repetition_penalty=body.get("repetition_penalty"),
@@ -723,6 +737,9 @@ def make_local_completion_handler(provider: Any):
             # fault, still OpenAI's model_not_found shape.
             logger.error("Unknown model for stream %s: %s", stream, e)
             return JSONResponse(status_code=404, content={"error": str(e)})
+        except ContextBudgetExhausted as e:
+            logger.info("Context budget exhausted for stream %s: %s", stream, e)
+            return _context_budget_exhausted_response(e)
         except TokenStreamError as e:
             logger.error("Strict TITO violation for stream %s: %s", stream, e)
             return JSONResponse(status_code=400, content={"error": str(e)})

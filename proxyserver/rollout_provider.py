@@ -65,7 +65,16 @@ import logging
 import httpx
 from typing import Any, Callable
 from uuid import uuid4
-from .engines import ABORT, DEFAULT_MAX_TOKENS, LENGTH, SGLANG, EngineAbort, EngineError, get_adapter
+from .engines import (
+    ABORT,
+    DEFAULT_MAX_TOKENS,
+    LENGTH,
+    SGLANG,
+    ContextBudgetExhausted,
+    EngineAbort,
+    EngineError,
+    get_adapter,
+)
 from .model_registry import ModelRegistry, ResolvedModel, validate_sampling_overrides
 from .token_stream import TokenStreamError, normalize_messages
 
@@ -398,6 +407,7 @@ class BaseRolloutProvider:
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
         seed: int | None = None,
+        max_total_tokens: int | None = None,
     ) -> tuple[list[int], list[int], list[float], str, str, dict[str, Any]]:
         """Tokenize, call the rollout engine, return raw results.
 
@@ -514,6 +524,19 @@ class BaseRolloutProvider:
             overrides = {**self._config_sampling_overrides, **self._runtime_sampling_overrides}
             sampling_params.update(overrides)
             sampling_params["max_tokens"] = max_tokens
+            # Enforce a trajectory budget on the authoritative TITO prompt,
+            # including sampled reasoning that a chat re-render can discard.
+            if max_total_tokens is not None:
+                if (
+                    isinstance(max_total_tokens, bool)
+                    or not isinstance(max_total_tokens, int)
+                    or max_total_tokens < 1
+                ):
+                    raise ValueError("max_total_tokens must be a positive integer")
+                _clamp_to_context_window(
+                    sampling_params, len(prompt_ids), max_total_tokens,
+                    "request token budget", session_id,
+                )
             sampling_params["logprobs"] = True
             if stop:
                 sampling_params["stop"] = stop
@@ -930,7 +953,7 @@ def _clamp_to_context_window(
         return
     budget = context_length - prompt_len
     if budget <= 0:
-        raise EngineError(
+        raise ContextBudgetExhausted(
             f"Session {session_id}: prompt is {prompt_len} tokens but "
             f"{endpoint} serves a {context_length}-token context "
             f"window; the session has no room left to generate"

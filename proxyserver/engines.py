@@ -66,6 +66,10 @@ class EngineError(RuntimeError):
     """The rollout engine returned a result the proxy cannot record."""
 
 
+class ContextBudgetExhausted(EngineError):
+    """The recorded prompt has consumed the session's context budget."""
+
+
 class EngineAbort(EngineError):
     """The engine aborted the request; its tokens are partial or empty."""
 
