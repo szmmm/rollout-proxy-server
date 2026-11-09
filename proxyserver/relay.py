@@ -449,6 +449,7 @@ class InferenceRelay:
         repetition_penalty: float | None = None,
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
+        seed: int | None = None,
     ) -> dict[str, Any]:
         """Dispatch an inference request to a connected worker.
 
@@ -487,6 +488,7 @@ class InferenceRelay:
             "repetition_penalty": repetition_penalty,
             "presence_penalty": presence_penalty,
             "frequency_penalty": frequency_penalty,
+            "seed": seed,
         }
 
         try:

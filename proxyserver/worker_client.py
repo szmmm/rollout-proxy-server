@@ -307,6 +307,7 @@ class InferenceWorkerClient:
                     repetition_penalty=request.get("repetition_penalty"),
                     presence_penalty=request.get("presence_penalty"),
                     frequency_penalty=request.get("frequency_penalty"),
+                    seed=request.get("seed"),
                 )
             )
 

@@ -243,13 +243,15 @@ async def test_endpoints() -> None:
         resp = await http.post(
             f"{stack.url}/v1/chat/completions", headers=agent,
             json={"model": MODEL, "messages": [{"role": "user", "content": "hi"}],
-                  "max_tokens": 8, "temperature": 0.2, "top_p": 0.5},
+                  "max_tokens": 8, "temperature": 0.2, "top_p": 0.5,
+                  "seed": 2026100500},
         )
         check("completion through the proxy succeeds", resp.status_code == 200)
         seen = stack.provider.seen[-1]
         check("pushed override beats the agent's temperature", seen["temperature"] == 0.8)
         check("config override beats the agent's top_p", seen["top_p"] == 1.0)
         check("agent keeps max_tokens", seen["max_tokens"] == 8)
+        check("request seed reaches the provider's engine params", seen["seed"] == 2026100500)
 
         # Clearing over HTTP falls back to the config layer.
         resp = await http.put(url, headers=bare, json={})

@@ -55,7 +55,13 @@ def load_yaml_config(body: str):
 
 
 PROMPT = [1, 2, 3]
-PARAMS = {"max_tokens": 64, "logprobs": True, "temperature": 0.7, "top_p": None}
+PARAMS = {
+    "max_tokens": 64,
+    "logprobs": True,
+    "temperature": 0.7,
+    "top_p": None,
+    "seed": 2026100500,
+}
 TOKENS = [900, 901, 902]
 LOGPROBS = [-0.1, -0.2, -0.3]
 
@@ -124,6 +130,11 @@ def test_tokens_only_engine() -> None:
     check("logprobs translated to return_logprob", body["return_logprob"] is True)
     check("None-valued sampling knobs are dropped", "top_p" not in body["sampling_params"])
     check("resolved knobs ride through", body["sampling_params"]["temperature"] == 0.7)
+    check(
+        "OpenAI seed translates to SGLang sampling_seed",
+        body["sampling_params"]["sampling_seed"] == 2026100500
+        and "seed" not in body["sampling_params"],
+    )
 
 
 def test_tokenizer_initialized_engine() -> None:

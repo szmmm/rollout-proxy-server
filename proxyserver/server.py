@@ -410,6 +410,7 @@ async def _handle_relay_completion(
             repetition_penalty=body.get("repetition_penalty"),
             presence_penalty=_sampling_param(body, "presence_penalty"),
             frequency_penalty=_sampling_param(body, "frequency_penalty"),
+            seed=body.get("seed"),
         )
     except RuntimeError as e:
         # WorkerError with error_type "invalid_request" (e.g. a strict
@@ -672,6 +673,7 @@ def make_local_completion_handler(provider: Any):
                     repetition_penalty=body.get("repetition_penalty"),
                     presence_penalty=_sampling_param(body, "presence_penalty"),
                     frequency_penalty=_sampling_param(body, "frequency_penalty"),
+                    seed=body.get("seed"),
                 )
             )
             content_text, tool_calls, finish_reason = await provider.parse_tool_calls(

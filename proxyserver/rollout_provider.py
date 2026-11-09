@@ -396,6 +396,7 @@ class BaseRolloutProvider:
         repetition_penalty: float | None = None,
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
+        seed: int | None = None,
     ) -> tuple[list[int], list[int], list[float], str, str, dict[str, Any]]:
         """Tokenize, call the rollout engine, return raw results.
 
@@ -502,6 +503,7 @@ class BaseRolloutProvider:
                 "repetition_penalty": repetition_penalty,
                 "presence_penalty": presence_penalty,
                 "frequency_penalty": frequency_penalty,
+                "seed": seed,
             }
             sampling_params: dict[str, Any] = dict(resolved.sampling_defaults)
             sampling_params.update({k: v for k, v in requested.items() if v is not None})
@@ -771,6 +773,10 @@ async def _sglang_generate(
     """
     params = dict(sampling_params)
     params["max_new_tokens"] = params.pop("max_tokens", None)
+    # OpenAI/vLLM call this knob ``seed``; SGLang's native /generate
+    # SamplingParams names it ``sampling_seed``.
+    if "seed" in params:
+        params["sampling_seed"] = params.pop("seed")
     return_logprob = bool(params.pop("logprobs", False))
     params = {k: v for k, v in params.items() if v is not None}
 
@@ -1387,7 +1393,7 @@ class DirectRolloutProvider(BaseRolloutProvider):
         # vLLM extensions its OpenAI-compatible /v1/completions accepts.
         for key in (
             "temperature", "top_p", "top_k", "min_p", "stop",
-            "repetition_penalty", "presence_penalty", "frequency_penalty",
+            "repetition_penalty", "presence_penalty", "frequency_penalty", "seed",
         ):
             if sampling_params.get(key) is not None:
                 payload[key] = sampling_params[key]
