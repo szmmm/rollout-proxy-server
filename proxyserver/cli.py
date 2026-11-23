@@ -51,10 +51,28 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 from .config import ProxyConfig, load_config
 from .server import LLMProxyServer
 
 logger = logging.getLogger(__name__)
+
+
+class _CompletionAccessFilter(logging.Filter):
+    """Keep the attributed completion trace instead of redundant HTTP successes."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if record.levelno != logging.INFO or not isinstance(args, tuple) or len(args) != 5:
+            return True
+        if record.name == "httpx" and record.msg == 'HTTP Request: %s %s "%s %d %s"':
+            method, url, _, status, _ = args
+            path = urlsplit(str(url)).path
+            return not (method == "POST" and path in ("/generate", "/v1/chat/completions") and isinstance(status, int) and 200 <= status < 300)
+        if record.name == "uvicorn.access" and record.msg == '%s - "%s %s HTTP/%s" %d':
+            _, method, path, _, status = args
+            return not (method == "POST" and str(path).split("?", 1)[0] == "/v1/chat/completions" and isinstance(status, int) and 200 <= status < 300)
+        return True
 
 
 def run_standalone_proxy(
@@ -107,6 +125,9 @@ def run_standalone_proxy(
         level=getattr(logging, log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+    if log_level.upper() != "DEBUG":
+        for name in ("httpx", "uvicorn.access"):
+            logging.getLogger(name).addFilter(_CompletionAccessFilter())
 
     if isinstance(config, ProxyConfig):
         cfg = config
