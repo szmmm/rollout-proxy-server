@@ -99,6 +99,7 @@ class ProxyConfig:
     #: pushes via ``PUT /sampling_overrides``.
     sampling_overrides: dict[str, Any] | None = None
     path: Path | None = None           # file this config was loaded from
+    attention_dp_size: int = 1         # slime: attention ranks per engine
 
 
 def load_config(
@@ -148,6 +149,9 @@ def load_config(
     port = data.get("port")
     router_url = data.get("router_url")
     router_api_key = data.get("router_api_key")
+    attention_dp_size = data.get("attention_dp_size", 1)
+    if type(attention_dp_size) is not int or attention_dp_size < 1:
+        raise ValueError(f"{config_path}: attention_dp_size must be a positive integer")
     context_length = data.get("context_length")
     if context_length is not None:
         if transport_mode != "slime":
@@ -199,6 +203,7 @@ def load_config(
         router_url=str(router_url) if router_url else None,
         router_api_key=str(router_api_key) if router_api_key else None,
         context_length=context_length,
+        attention_dp_size=attention_dp_size,
         inference_engine_base_url=engine_base_urls,
         inference_engine_api_key=engine_api_keys,
         sampling_overrides=sampling_overrides,

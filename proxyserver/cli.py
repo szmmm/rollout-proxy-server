@@ -188,6 +188,7 @@ def run_standalone_proxy(
                 api_key=router_api_key,
                 sampling_overrides=sampling_overrides,
                 context_length=context_length,
+                attention_dp_size=cfg.attention_dp_size if cfg is not None else 1,
             )
             transport_target = f"slime sgl-router at {router_url}"
         else:

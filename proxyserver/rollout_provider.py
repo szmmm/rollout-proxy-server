@@ -61,6 +61,7 @@ Usage::
 
 from __future__ import annotations
 import asyncio
+import hashlib
 import logging
 import httpx
 from typing import Any, Callable
@@ -789,6 +790,8 @@ async def _sglang_generate(
     prompt_ids: list[int],
     sampling_params: dict[str, Any],
     session_id: str | None,
+    *,
+    routed_dp_rank: int | None = None,
 ) -> tuple[list[int], list[float], str | None, dict[str, Any]]:
     """One generation in SGLang's native ``/generate`` dialect.
 
@@ -816,15 +819,14 @@ async def _sglang_generate(
     return_logprob = bool(params.pop("logprobs", False))
     params = {k: v for k, v in params.items() if v is not None}
 
-    resp = await http.post(
-        "/generate",
-        json={
-            "input_ids": prompt_ids,
-            "sampling_params": params,
-            "return_logprob": return_logprob,
-        },
-        headers=_routing_headers(session_id),
-    )
+    payload = {
+        "input_ids": prompt_ids,
+        "sampling_params": params,
+        "return_logprob": return_logprob,
+    }
+    if routed_dp_rank is not None:
+        payload["routed_dp_rank"] = routed_dp_rank
+    resp = await http.post("/generate", json=payload, headers=_routing_headers(session_id))
     resp.raise_for_status()
     output = resp.json()
 
@@ -1003,9 +1005,11 @@ class SlimeRolloutProvider(BaseRolloutProvider):
         tokenizer_loader: Callable[[str], Any] | None = None,
         sampling_overrides: dict[str, Any] | None = None,
         context_length: int | None = None,
+        attention_dp_size: int = 1,
     ) -> None:
         """
         Args:
+            attention_dp_size: Number of attention ranks per engine.
             router_url: Base URL of slime's ``sgl-router`` (or of a bare
                 SGLang server), e.g. ``http://10.0.1.5:30000``.
             tool_parser_factory: Optional ``(tool_call_parser, tokenizer) -> tool_parser``.
@@ -1044,6 +1048,9 @@ class SlimeRolloutProvider(BaseRolloutProvider):
         import httpx
 
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        if type(attention_dp_size) is not int or attention_dp_size < 1:
+            raise ValueError("attention_dp_size must be a positive integer")
+        self.attention_dp_size = attention_dp_size
         self.router_url = router_url.rstrip("/")
         self._http = httpx.AsyncClient(
             base_url=self.router_url,
@@ -1151,7 +1158,13 @@ class SlimeRolloutProvider(BaseRolloutProvider):
             sampling_params, len(prompt_ids),
             await self._engine_context_length(), self.router_url, session_id,
         )
-        return await _sglang_generate(self._http, prompt_ids, sampling_params, session_id)
+        rank = None
+        if session_id and self.attention_dp_size > 1:
+            digest = hashlib.blake2b(session_id.encode(), digest_size=8).digest()
+            rank = int.from_bytes(digest, "big") % self.attention_dp_size
+        return await _sglang_generate(
+            self._http, prompt_ids, sampling_params, session_id, routed_dp_rank=rank,
+        )
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
